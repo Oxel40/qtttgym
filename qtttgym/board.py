@@ -1,23 +1,26 @@
 class Board:
     def __init__(self, qevaluator):
-        self.moves: list[tuple[int, int]] = []
+        # TODO: might be able to use int instead of str
+        self.moves: list[tuple[int, int, str]] = []
         self.board: list[int] = [-1, -1, -1, -1, -1, -1, -1, -1, -1]
         self.qstructs: list[set] = []
         self.qeval = qevaluator
 
     def make_move(self, move: tuple[int, int]):
         if (move[0] == move[1]):
-            if (self.board.count(-1) != 1):
-                raise Exception(
-                    "Move in same square not allowed when not necessary")
-            else:
-                self.moves.append((move[0], move[1], f"r{len(self.moves)}"))
-                self.board[move[0]] = len(self.moves) - 1
-        else:
-            if self.board[move[0]] != -1 or self.board[move[1]] != -1:
-                raise Exception("Move in classical square not allowed")
-            self.moves.append((move[0], move[1], f"r{len(self.moves)}"))
-            self.update_qstructs(move)
+            raise Exception(
+                "Move in same square not allowed when not necessary")
+
+        if self.board[move[0]] != -1 or self.board[move[1]] != -1:
+            raise Exception("Move in classical square not allowed")
+
+        self.moves.append((move[0], move[1], len(self.moves)))
+        self.update_qstructs(move)
+        # Autofill last square
+        if self.board.count(-1) == 1:
+            idx = self.board.index(-1)
+            self.board[idx] = len(self.moves)
+            self.moves.append((idx, idx, len(self.moves)))
 
     def update_qstructs(self, move: tuple):
         m0 = -1
