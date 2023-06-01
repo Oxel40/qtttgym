@@ -20,8 +20,9 @@ class Env():
             "draw": 0.0,
             "otherwise": 0.0
         }
-
+        
     def step(self, action: ActType, verbose=False) -> tuple[ObsType, RewType, bool, bool]:
+        cur_player = self.turn % 2
         try:
             squareFirst = action[0]
             squareSecond = action[1]
@@ -30,7 +31,9 @@ class Env():
         except Exception as e:
             if verbose:
                 print('noop (i.e. invalid) move...', e)
-        obs = self._observation()
+        # unsure about including the binary value for which players turn it is
+        # this information is given implicitly in the state vector, but I'm not sure
+        obs = self._observation() #+ (cur_player,)
         rew = self._reward()
         terminated = any(map(lambda r: r != 0, rew)) or self.turn() > 8
         truncated = False
@@ -50,11 +53,17 @@ class Env():
         return len(self._gameboard.moves)
 
     def _observation(self):
-        out = self._gameboard.moves.copy()
-        for i, r in enumerate(self._gameboard.board):
-            if r >= 0:
-                out[r] = i
-        return tuple(out)
+        q_states_player1 = []
+        q_states_player2 = []
+        classical_state = self._gameboard.board
+        classical_pieces = set(classical_state)
+        for move in self._gameboard.moves:
+            if move[-1] not in classical_pieces:
+                if move[-1] % 2:
+                    q_states_player2.append(move[:-1])
+                else:
+                    q_states_player1.append(move[:-1])
+        return (q_states_player1, q_states_player2, classical_state)
 
     def _reward(self):
         """
