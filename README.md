@@ -25,9 +25,11 @@ This minimax one policy is attempting to maximize the value and the other is att
 ## Action space and NN architecture
 
 So an agent has a total of $9^2=81$ different actions. This on the limit of what is doable with traditional DQN. We might need to use an policy gradient approach to this problem where use make create an autoregressive policy. Since our policy has to generate two integers $x$ and $y$ we can utilize the factorization of distributions.
+
 $$
 \pi_\theta(x,y|s) = \pi_\theta(x|y,s)\pi_\theta(y|s)
 $$
+
 This way we only need to design a NN with 18 output nodes, which is significantly easier to train.
 
 ![image](mdp1.png)
