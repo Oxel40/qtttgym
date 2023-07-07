@@ -2,17 +2,26 @@ from qtttgym import Board
 from qtttgym import QEvalClassic
 from qtttgym import displayBoard
 
+import gymnasium as gym
+from gymnasium.spaces import Discrete, Tuple, Dict, Box
+from ray.rllib.utils.spaces.repeated import Repeated
 
 ActType = tuple[int, int]
 ObsType = tuple[int | tuple[int, int, int], ...]
 RewType = tuple[float, float]
 
 
-class Env():
+class Env(gym.Env):
     def __init__(self):
+        super().__init__()
         # TODO: fix action_space and observation_space
-        self.action_space = [(a, b) for a in range(9) for b in range(a+1, 9)]
-        self.observation_space = ...
+        self.action_space = Tuple((Discrete(9), Discrete(9)))
+        self.observation_space = Dict({
+            "q_states_p1" : Repeated(Tuple((Discrete(9), Discrete(9))), 5),
+            "q_states_p2" : Repeated(Tuple((Discrete(9), Discrete(9))), 4),
+            "classical"   : Box(-1, 1, shape=(9,), dtype=int),
+            "turn"        : Discrete(2),
+        })
         self._gameboard = Board(QEvalClassic())
         self._reward_map = {
             "win": 1.0,
@@ -37,11 +46,11 @@ class Env():
         rew = self._reward()
         terminated = any(map(lambda r: r != 0, rew)) or self.turn() > 8
         truncated = False
-        return (obs, rew, terminated, truncated)
+        return obs, rew, terminated, truncated, {}
 
-    def reset(self) -> ObsType:
+    def reset(self, *, seed=None, options=None) -> ObsType:
         self.__init__()
-        return self._observation()
+        return self._observation(), {}
 
     def render(self):
         displayBoard(self._gameboard)
