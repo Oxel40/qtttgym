@@ -45,23 +45,3 @@ where $\tau$ is a temperature which controls the level of exploration. The MCTS 
 I found one implementation of MCTS [here](https://github.com/JoshVarty/AlphaZeroSimple/blob/b68171a5cb9367b407017e07f5de3f65b10e888e/monte_carlo_tree_search.py#L97). We can use this just to get an idea of how the algorithm will look like
 
 From reading the AlphaGo paper, I get the impression that the core algorithmic breakthrough is the multiheaded neural network, MCTS and count based exploration
-
-## Action space and NN architecture
-
-So an agent has a total of $9^2=81$ different actions. This on the limit of what is doable with traditional DQN. We might need to use an policy gradient approach to this problem where use make create an autoregressive policy. Since our policy has to generate two integers $x$ and $y$ we can utilize the factorization of distributions.
-
-$$
-\pi_\theta(x,y|s) = \pi_\theta(x|y,s)\pi_\theta(y|s)
-$$
-
-This way we only need to design a NN with 18 output nodes, which is significantly easier to train.
-
-![image](mdp1.png)
-
-Since our environment is relatively small and easy to sample from, we should be able to simply run PPO on this problem and hopefully it should converge to a good policy. The potential downside I see with this is that if we train an agent with self play, we might run into situation where our AI might not be able to know how to play against any other opponent that itself. So if we were to do a Q learning approach(like SAC) we might be more flexible in situations where the AI is not playing against itself. In this case I think we can be really sneaky and implement a really clever Q function NN that might be easier to train.
-
-![image](q_nn.png)
-
-In short, the action encoding will since we shouldn't care about the action of player 2 on player 1s turn, we should completly remove the latent encoding of that action as we propogate our latent vector foward through our NN.
-
-These are all of my current thoughts on this problem
