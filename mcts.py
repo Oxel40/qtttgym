@@ -1,109 +1,135 @@
+"""
+A minimal implementation of Monte Carlo tree search (MCTS) in Python 3
+Luke Harold Miles, July 2019, Public Domain Dedication
+See also https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
+https://gist.github.com/qpwo/c538c6f73727e254fdc7fab81024f6e1
+"""
+from abc import ABC, abstractmethod
+from collections import defaultdict
 import math
-import numpy as np
 
 
-class Node:
-    def __init__(self, game, args, state, parent=None, action_taken=None):
-        self.game = game
-        self.args = args
-        self.state = state
-        self.parent = parent
-        self.action_taken = action_taken
-        
-        self.children = []
-        self.expandable_moves = game.get_valid_moves(state)
-        
-        self.visit_count = 0
-        self.value_sum = 0
-        
-    def is_fully_expanded(self):
-        return np.sum(self.expandable_moves) == 0 and len(self.children) > 0
-    
-    def select(self):
-        best_child = None
-        best_ucb = -np.inf
-        
-        for child in self.children:
-            ucb = self.get_ucb(child)
-            if ucb > best_ucb:
-                best_child = child
-                best_ucb = ucb
-                
-        return best_child
-    
-    def get_ucb(self, child):
-        q_value = 1 - ((child.value_sum / child.visit_count) + 1) / 2
-        return q_value + self.args['C'] * math.sqrt(math.log(self.visit_count) / child.visit_count)
-    
-    def expand(self):
-        action = np.random.choice(np.where(self.expandable_moves == 1)[0])
-        self.expandable_moves[action] = 0
-        
-        child_state = self.state.copy()
-        child_state = self.game.get_next_state(child_state, action, 1)
-        child_state = self.game.change_perspective(child_state, player=-1)
-        
-        child = Node(self.game, self.args, child_state, self, action)
-        self.children.append(child)
-        return child
-    
-    def simulate(self):
-        value, is_terminal = self.game.get_value_and_terminated(self.state, self.action_taken)
-        value = self.game.get_opponent_value(value)
-        
-        if is_terminal:
-            return value
-        
-        rollout_state = self.state.copy()
-        rollout_player = 1
-        while True:
-            valid_moves = self.game.get_valid_moves(rollout_state)
-            action = np.random.choice(np.where(valid_moves == 1)[0])
-            rollout_state = self.game.get_next_state(rollout_state, action, rollout_player)
-            value, is_terminal = self.game.get_value_and_terminated(rollout_state, action)
-            if is_terminal:
-                if rollout_player == -1:
-                    value = self.game.get_opponent_value(value)
-                return value    
-            
-            rollout_player = self.game.get_opponent(rollout_player)
-            
-    def backpropagate(self, value):
-        self.value_sum += value
-        self.visit_count += 1
-        
-        value = self.game.get_opponent_value(value)
-        if self.parent is not None:
-            self.parent.backpropagate(value) 
+class Node(ABC):
+    """
+    A representation of a single board state.
+    MCTS works by constructing a tree of these Nodes.
+    Could be e.g. a chess or checkers board state.
+    """
+
+    @abstractmethod
+    def find_children(self):
+        "All possible successors of this board state"
+        return set()
+
+    @abstractmethod
+    def find_random_child(self):
+        "Random successor of this board state (for more efficient simulation)"
+        return None
+
+    @abstractmethod
+    def is_terminal(self):
+        "Returns True if the node has no children"
+        return True
+
+    @abstractmethod
+    def reward(self):
+        "Assumes `self` is terminal node. 1=win, 0=loss, .5=tie, etc"
+        return 0
+
+    @abstractmethod
+    def __hash__(self):
+        "Nodes must be hashable"
+        return 123456789
+
+    @abstractmethod
+    def __eq__(node1, node2):
+        "Nodes must be comparable"
+        return True
 
 
 class MCTS:
-    def __init__(self, game, args):
-        self.game = game
-        self.args = args
-        
-    def search(self, state):
-        root = Node(self.game, self.args, state)
-        
-        for search in range(self.args['num_searches']):
-            node = root
-            
-            while node.is_fully_expanded():
-                node = node.select()
-                
-            value, is_terminal = self.game.get_value_and_terminated(node.state, node.action_taken)
-            value = self.game.get_opponent_value(value)
-            
-            if not is_terminal:
-                node = node.expand()
-                value = node.simulate()
-                
-            node.backpropagate(value)    
-            
-            
-        action_probs = np.zeros(self.game.action_size)
-        for child in root.children:
-            action_probs[child.action_taken] = child.visit_count
-        action_probs /= np.sum(action_probs)
-        return action_probs
-        
+    "Monte Carlo tree searcher. First rollout the tree then choose a move."
+
+    def __init__(self, exploration_weight=1):
+        self.Q = defaultdict(int)  # total reward of each node
+        self.N = defaultdict(int)  # total visit count for each node
+        self.children = dict()  # children of each node
+        self.exploration_weight = exploration_weight
+
+    def choose(self, node:Node):
+        "Choose the best successor of node. (Choose a move in the game)"
+        if node.is_terminal():
+            raise RuntimeError(f"choose called on terminal node {node}")
+
+        if node not in self.children:
+            return node.find_random_child()
+
+        def score(n):
+            if self.N[n] == 0:
+                return float("-inf")  # avoid unseen moves
+            return self.Q[n] / self.N[n]  # average reward
+
+        return max(self.children[node], key=score)
+
+    def do_rollout(self, node:Node):
+        "Make the tree one layer better. (Train for one iteration.)"
+        path = self._select(node)
+        leaf = path[-1]
+        self._expand(leaf)
+        reward = self._simulate(leaf)
+        self._backpropagate(path, reward)
+
+    def _select(self, node:Node):
+        "Find an unexplored descendent of `node`"
+        path = []
+        while True:
+            path.append(node)
+            if node not in self.children or not self.children[node]:
+                # node is either unexplored or terminal
+                return path
+            unexplored = self.children[node] - self.children.keys()
+            if unexplored:
+                n = unexplored.pop()
+                path.append(n)
+                return path
+            node = self._uct_select(node)  # descend a layer deeper
+
+    def _expand(self, node:Node):
+        "Update the `children` dict with the children of `node`"
+        if node in self.children:
+            return  # already expanded
+        self.children[node] = node.find_children()
+
+    def _simulate(self, node:Node):
+        "Returns the reward for a random simulation (to completion) of `node`"
+        invert_reward = True
+        while True:
+            if node.is_terminal():
+                reward = node.reward()
+                return 1 - reward if invert_reward else reward
+            node = node.find_random_child()
+            invert_reward = not invert_reward
+
+    def _backpropagate(self, path:list[Node], reward):
+        "Send the reward back up to the ancestors of the leaf"
+        for node in reversed(path):
+            self.N[node] += 1
+            self.Q[node] += reward
+            reward = 1 - reward  # 1 for me is 0 for my enemy, and vice versa
+
+    def _uct_select(self, node:Node):
+        "Select a child of node, balancing exploration & exploitation"
+
+        # All children of node should already be expanded:
+        assert all(n in self.children for n in self.children[node])
+
+        log_N_vertex = math.log(self.N[node])
+
+        def uct(n):
+            "Upper confidence bound for trees"
+            return self.Q[n] / self.N[n] + self.exploration_weight * math.sqrt(
+                log_N_vertex / self.N[n]
+            )
+
+        return max(self.children[node], key=uct)
+
