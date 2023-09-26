@@ -27,7 +27,7 @@ class Node(ABC):
         return None
 
     @abstractmethod
-    def is_terminal(self):
+    def is_terminal(self) -> bool:
         "Returns True if the node has no children"
         return True
 
@@ -42,7 +42,7 @@ class Node(ABC):
         return 123456789
 
     @abstractmethod
-    def __eq__(node1, node2):
+    def __eq__(node1, node2) -> bool:
         "Nodes must be comparable"
         return True
 
