@@ -13,7 +13,9 @@ class Board:
 
         if self.board[move[0]] != -1 or self.board[move[1]] != -1:
             raise Exception("Move in classical square not allowed")
-
+        if move[0] > move[1]:
+            # This fix makes sure states are hashable
+            move = (move[1], move[0])
         self.moves.append((move[0], move[1], len(self.moves)))
         self.update_qstructs(move)
         # Autofill last square
@@ -111,3 +113,6 @@ class Board:
         p2_round = p2_round if p2_round < 10 else -1
 
         return p1_round, p2_round
+
+    def hash(self):
+        return hash(tuple(self.moves))
