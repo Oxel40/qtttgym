@@ -76,7 +76,7 @@ class MCTS:
         path = self._select(node)
         leaf = path[-1]
         self._expand(leaf)
-        reward = self._simulate(leaf)
+        reward = self._simulate(path)
         self._backpropagate(path, reward)
 
     def _select(self, node:Node):
@@ -100,15 +100,18 @@ class MCTS:
             return  # already expanded
         self.children[node] = node.find_children()
 
-    def _simulate(self, node:Node):
+    def _simulate(self, path:list[Node]):
         "Returns the reward for a random simulation (to completion) of `node`"
         invert_reward = True
+        node = path[-1]
         while True:
             if node.is_terminal():
                 reward = node.reward()
                 return -reward if invert_reward else reward
-            node = node.find_random_child()
+            new_node = node.find_random_child()
             invert_reward = not invert_reward
+            node = new_node
+            path.append(node)
 
     def _backpropagate(self, path:list[Node], reward):
         "Send the reward back up to the ancestors of the leaf"

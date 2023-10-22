@@ -6,6 +6,7 @@ import random
 from mcts import Node, MCTS
 import qtttgym
 
+from copy import deepcopy
 # move2ind = {}
 # ind2move  = {}
 # n = 0
@@ -53,22 +54,23 @@ class Q3TBoard(qtttgym.Board, Node):
     def reward(self):
         if not self.terminal:
             raise RuntimeError(f"reward called on nonterminal board {self}")
+        r1, r2 = self.check_win()
+        if r1 < r2 and r1 > 0:
+            # player 1 is the winner
+            self.winner = 0
+        elif r2 < r1 and r2 > 0:
+            self.winner = 1
+        if self.winner == self.turn():
+            return 1
+        elif self.winner == None:
+            return 0
+        return -1
         
-        if self.winner is self.turn():
-            # It's your turn and you've already won. Should be impossible.
-            raise RuntimeError(f"reward called on unreachable board {self}")
-        if self.turn() is (not self.winner):
-            return -1  # Your opponent has just won. Bad.
-        if self.winner is None:
-            return 0  # Board is a tie
-        # The winner is neither True, False, nor None
-        raise RuntimeError(f"board has unknown winner type {self.winner}")
-
     def is_terminal(self):
         return self.terminal
     
     def step(self, move: tuple[int, int]):
-        new_state = Q3TBoard()
+        new_state = deepcopy(self)
         new_state.make_move(move)
         p1, p2 = new_state.check_win()
         if p1 > p2 and p1 > 0:
@@ -88,6 +90,36 @@ class Q3TBoard(qtttgym.Board, Node):
     def __hash__(self) -> int:
         return self.hash()
 
+    def __str__(self) -> str:
+        list_of_buffers = [[' '] * 9 for _ in range(9)]
+
+        for i, m in enumerate(self.moves):
+            list_of_buffers[m[0]][i] = str(i)
+            list_of_buffers[m[1]][i] = str(i)
+
+        for i, b in enumerate(self.board):
+            if b >= 0:
+                for j in range(9):
+                    if (j % 2 == 0 and b % 2 == 0):
+                        list_of_buffers[i][j] = 'x'
+                    elif (j % 2 == 1 and b % 2 == 1):
+                        list_of_buffers[i][j] = 'o'
+                    else:
+                        list_of_buffers[i][j] = ' '
+                list_of_buffers[i][4] = str(b)
+
+        out_string = ""
+        for i in range(3):
+            out_string += "+---+---+---+\n"
+            for k in range(3):
+                for j in range(3):
+                    out_string += "|"
+                    out_string += "".join(list_of_buffers[i *
+                                        3 + j][k * 3: k * 3 + 3])
+                out_string += "|\n"
+        out_string += "+---+---+---+\n"
+        return out_string
+
 def ind2move(n) -> tuple[int, int]:
     i = (17 - math.sqrt(17*17 - 8*n))/2
     i = int(i)
@@ -97,14 +129,23 @@ def ind2move(n) -> tuple[int, int]:
 def play_game():
     tree = MCTS()
     board = Q3TBoard()
-    while True:
-        for i in range(10):
+    terminal = False
+    qtttgym.displayBoard(board)
+    while not terminal:
+        move = tuple(map(int, input("make a move: ").split()))
+        board = board.step(move)
+        qtttgym.displayBoard(board)
+        terminal = board.terminal
+        if terminal: break
+
+        for i in range(2000):
             tree.do_rollout(board)
-            print(i)
+            # print(i)
         board = tree.choose(board)
         qtttgym.displayBoard(board)
-        quit()
-
+        terminal = board.terminal
+    print(board.winner)
+    print()
 
 if __name__ == "__main__":
     # print(move2ind(1,2))
