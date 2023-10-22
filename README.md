@@ -40,8 +40,10 @@ $$\pi(a|s_0) = \frac{N(s_0, a)^{1/\tau}}{\sum_b N(s_0, b)^{1/\tau}}$$
 
 where $\tau$ is a temperature which controls the level of exploration. The MCTS tree is then pruned when an action $a$ is taken while the subtree of the resulting node is used as the root node. AlphaGo also resigns if the value of the root node is less than a threshold value $v_{resign}$.
 
-### Code
+### Some Improvements
 
-I found one implementation of MCTS [here](https://github.com/JoshVarty/AlphaZeroSimple/blob/b68171a5cb9367b407017e07f5de3f65b10e888e/monte_carlo_tree_search.py#L97). We can use this just to get an idea of how the algorithm will look like
+Some improvements that are perhaps needed but perhaps not explicit
 
-From reading the AlphaGo paper, I get the impression that the core algorithmic breakthrough is the multiheaded neural network, MCTS and count based exploration
+- The choose function doesn't actually prune the tree since all of the nodes are stored in a dictionary "children" which maps the a parent node to all of its children. So storing the nodes in an actual tree structure is perhaps the most efficient
+- Currently we have a Node.find_children function which returns a set of all child nodes. This function is unessesary and we only need to return the available actions. We are essentially expanding a node if it hasn't been expanded. This is time and memory inefficient
+- OFC we need to do self play and RL on this, this is the key ingredient in order to make an unbeatable AI.
