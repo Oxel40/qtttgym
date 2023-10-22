@@ -115,4 +115,4 @@ class Board:
         return p1_round, p2_round
 
     def hash(self):
-        return hash(tuple(self.moves))
+        return hash(tuple(self.moves)) + hash(tuple(self.board))
