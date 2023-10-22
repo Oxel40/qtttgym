@@ -5,7 +5,7 @@ import random
 
 from mcts import Node, MCTS
 import qtttgym
-
+from tqdm import trange
 from copy import deepcopy
 # move2ind = {}
 # ind2move  = {}
@@ -138,13 +138,12 @@ def play_game():
         terminal = board.terminal
         if terminal: break
 
-        for i in range(2000):
+        for i in trange(10000, ncols=150):
             tree.do_rollout(board)
-            # print(i)
         board = tree.choose(board)
         qtttgym.displayBoard(board)
         terminal = board.terminal
-    print(board.winner)
+    print("Winner is player", board.winner+1)
     print()
 
 if __name__ == "__main__":
