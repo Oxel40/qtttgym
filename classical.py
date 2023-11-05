@@ -18,6 +18,7 @@ corrresponds to this tuple:
 from collections import namedtuple
 from random import choice
 from mcts import MCTS, Node
+from tqdm import trange
 
 _TTTB = namedtuple("TicTacToeBoard", "tup turn winner terminal")
 
@@ -78,18 +79,18 @@ def play_game():
     board = new_tic_tac_toe_board()
     print(board.to_pretty_string())
     while True:
-        row_col = input("enter row,col: ")
-        row, col = map(int, row_col.split(","))
-        index = 3 * (row - 1) + (col - 1)
-        if board.tup[index] is not None:
-            raise RuntimeError("Invalid move")
-        board = board.make_move(index)
-        print(board.to_pretty_string())
-        if board.terminal:
-            break
+        # row_col = input("enter row,col: ")
+        # row, col = map(int, row_col.split(","))
+        # index = 3 * (row - 1) + (col - 1)
+        # if board.tup[index] is not None:
+        #     raise RuntimeError("Invalid move")
+        # board = board.make_move(index)
+        # print(board.to_pretty_string())
+        # if board.terminal:
+        #     break
         # You can train as you go, or only at the beginning.
         # Here, we train as we go, doing fifty rollouts each turn.
-        for _ in range(50):
+        for _ in trange(50000):
             tree.do_rollout(board)
         board = tree.choose(board)
         print(board.to_pretty_string())

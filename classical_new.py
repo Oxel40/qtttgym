@@ -153,7 +153,9 @@ class TTTGame():
                 node.P = self.get_action_probs(node)
             # Sample an action according to P
             a = self.sample_action(node)
-            node = self._step(node, a)
+            self._expand_child(node, a)
+            node = node.children[a]
+            # node = self._step(node, a)
             invert_reward = not invert_reward
         r = self._reward(node)
         if invert_reward:
@@ -236,9 +238,9 @@ if __name__ == "__main__":
     # game.make_move(7)
     print(game.root)
     while not game.root.terminal:
-        a = int(input("Make move: "))
-        game.make_move(a)
-        print(game.root)
+        # a = int(input("Make move: "))
+        # game.make_move(a)
+        # print(game.root)
         rollout_bar = trange(50000)
         for i in rollout_bar:
             game.do_rollout()
