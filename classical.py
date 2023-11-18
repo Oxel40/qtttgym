@@ -18,86 +18,196 @@ corrresponds to this tuple:
 from collections import namedtuple
 from random import choice
 from mcts import MCTS, Node
+import numpy as np
+import math
 from tqdm import trange
 
 _TTTB = namedtuple("TicTacToeBoard", "tup turn winner terminal")
 
-# Inheriting from a namedtuple is convenient because it makes the class
-# immutable and predefines __init__, __repr__, __hash__, __eq__, and others
-class TicTacToeBoard(_TTTB, Node):
-    def find_children(board):
-        if board.terminal:  # If the game is finished then no moves can be made
-            return set()
-        # Otherwise, you can make a move in each of the empty spots
-        return {
-            board.make_move(i) for i, value in enumerate(board.tup) if value is None
-        }
 
-    def find_random_child(board):
-        if board.terminal:
-            return None  # If the game is finished then no moves can be made
-        empty_spots = [i for i, value in enumerate(board.tup) if value is None]
-        return board.make_move(choice(empty_spots))
+class TTTGame():
+    class GameState():
+        
+        def __init__(self, board, turn, winner, terminal):
+            # State params
+            self.board = board
+            self.turn = turn
+            self.winner = winner
+            self.terminal = terminal
+            
+            # actions
+            self.actions = list()
+            self.children = dict()
+            for i in range(9):
+                if self.board[i] is not None: continue
+                self.actions.append(i)
+                self.children[i] = None
+                    
+            
+            # MCTS properties
+            self.N_tot = 0
+            self.N:dict = {a : 0 for a in self.actions}
+            self.W:dict = {a : 0 for a in self.actions}
+            self.Q:dict = {a : 0 for a in self.actions}
+            self.P:dict|None = None
 
-    def reward(board):
-        if not board.terminal:
-            raise RuntimeError(f"reward called on nonterminal board {board}")
-        if board.winner is board.turn:
-            # It's your turn and you've already won. Should be impossible.
-            raise RuntimeError(f"reward called on unreachable board {board}")
-        if board.turn is (not board.winner):
-            return 0  # Your opponent has just won. Bad.
-        if board.winner is None:
-            return 0.5  # Board is a tie
-        # The winner is neither True, False, nor None
-        raise RuntimeError(f"board has unknown winner type {board.winner}")
 
-    def is_terminal(board):
-        return board.terminal
-
-    def make_move(board, index):
-        tup = board.tup[:index] + (board.turn,) + board.tup[index + 1 :]
-        turn = not board.turn
-        winner = _find_winner(tup)
-        is_terminal = (winner is not None) or not any(v is None for v in tup)
-        return TicTacToeBoard(tup, turn, winner, is_terminal)
-
-    def to_pretty_string(board):
-        to_char = lambda v: ("X" if v is True else ("O" if v is False else " "))
-        rows = [
-            [to_char(board.tup[3 * row + col]) for col in range(3)] for row in range(3)
-        ]
-        return (
+        def __hash__(self) -> int:
+            return hash(self.board + self.turn + self.winner + self.terminal)
+        
+        def __str__(self) -> str:
+            to_char = lambda v: ("X" if v is True else ("O" if v is False else " "))
+            rows = [
+                [to_char(self.board[3 * row + col]) for col in range(3)] for row in range(3)
+            ]
+            return (
             "\n  1 2 3\n"
             + "\n".join(str(i + 1) + " " + " ".join(row) for i, row in enumerate(rows))
             + "\n"
         )
+        def __repr__(self) -> str:
+            return f"GameState({self.board},{self.P is not None})"
 
+    def __init__(self) -> None:
+        self.root = self.GameState((None,)*9, True, None, False)
+        self.c_puct = 10
 
-def play_game():
-    tree = MCTS()
-    board = new_tic_tac_toe_board()
-    print(board.to_pretty_string())
-    while True:
-        # row_col = input("enter row,col: ")
-        # row, col = map(int, row_col.split(","))
-        # index = 3 * (row - 1) + (col - 1)
-        # if board.tup[index] is not None:
-        #     raise RuntimeError("Invalid move")
-        # board = board.make_move(index)
-        # print(board.to_pretty_string())
-        # if board.terminal:
-        #     break
-        # You can train as you go, or only at the beginning.
-        # Here, we train as we go, doing fifty rollouts each turn.
-        for _ in trange(50000):
-            tree.do_rollout(board)
-        board = tree.choose(board)
-        print(board.to_pretty_string())
-        if board.terminal:
-            break
+    def make_move(self, action):
+        if action not in self.root.children:
+            raise Exception("Invalid Action")
+        if self.root.children[action] is None:
+            # node has not been fully expanded
+            # only expand the child of this action
+            self._expand_child(self.root, action)
+        self.root = self.root.children[action]
 
+    def choose(self):
+        n = self.root
+        def score(a):
+            # if n.turn:
+            if n.N[a] == 0:
+                return -math.inf
+            return n.Q[a]
+            # else:
+            #     if n.N[a] == 0:
+            #         return math.inf
+            #     return -n.Q[a]
 
+        # print()
+        # print([score(a) for a in self.root.actions])
+        a_best = max(self.root.actions, key=score)
+        # print(a_best)
+        return a_best
+    
+    def _expand(self, node:GameState):
+        for a in node.actions:
+            if a in node.children: continue
+            self._expand_child(node, a)
+    
+    def _expand_child(self, node:GameState, action):
+        node.children[action] = self._step(node, action)
+
+    def _step(self, node:GameState, action):
+        new_board = node.board[:action] + (node.turn,) + node.board[action + 1 :]
+        turn = not node.turn
+        winner = _find_winner(new_board)
+        is_terminal = (winner is not None) or not any(v is None for v in new_board)
+        return self.GameState(new_board, turn, winner, is_terminal)
+
+    def do_rollout(self):
+        "Make the tree one layer better. (Train for one iteration.)"
+        # select until we uct select a new node
+        path, leaf = self._select(self.root)
+        # print(path)
+        # input()
+        # simulate from the new leaf to the bottom
+        # print()
+        # print("Start")
+        # print(leaf)
+        reward = self._simulate(leaf)
+        # print(reward)
+        # input()
+        path.append((leaf, None))
+        # for s, _ in path:
+        #     print(s)
+        # backprop
+        self._backpropogate(path, reward)
+        
+    
+    def _select(self, node:GameState) -> tuple[list[GameState], GameState]:
+        path = []
+        while (node.P is not None) and not node.terminal:
+            a = self._uct_select(node)
+            if node.children[a] is None:
+                self._expand_child(node, a)
+            path.append((node, a))
+            node = node.children[a]
+        return path, node
+
+    def _simulate(self, node:GameState) -> list[tuple[GameState, int]]:
+        # Simulates from the node to the bottom
+        invert_reward = True
+        while not node.terminal:
+            if node.P is None:
+                # Evaluate the action probabilities of this Node
+                node.P = self.get_action_probs(node)
+            # Sample an action according to P
+            a = self.sample_action(node)
+            self._expand_child(node, a)
+            node = node.children[a]
+            # node = self._step(node, a)
+            invert_reward = not invert_reward
+        r = self._reward(node)
+        if invert_reward:
+            r = -r
+        # print("END")
+        # print(node)
+        # print(node.winner, node.turn, invert_reward)
+        return r
+
+    def _backpropogate(self, path:list[tuple[GameState, int]], r):
+        leaf, _ = path.pop()
+        while path:
+            node, a = path.pop()
+            node.W[a] += r
+            node.N[a] += 1
+            node.Q[a] = node.W[a] / node.N[a]
+            node.N_tot += 1
+            r = -r
+        #     print(r)
+        # input()
+            
+        
+    def _reward(self, node:GameState):
+        if node.winner is None:
+            return 0
+        if node.turn is (not node.winner):
+            return -1
+        
+    
+    def _uct_select(self, node:GameState):
+        # Return the selected action
+        def uct(a):
+            # if node.turn:
+            U = node.P[a] * math.sqrt(node.N_tot)/(1 + node.N[a]) 
+            # if node.turn:
+            return node.Q[a] + self.c_puct * U
+            # else:
+            #     return -node.Q[a] + self.c_puct * U
+        # print(node)
+        # for a in node.actions:
+        #     print(a, uct(a))
+        # input()
+        return max(node.actions, key=uct)
+
+    def get_action_probs(self, node:GameState) -> dict:
+        # This should be replaced by a policy NN
+        return {a : 1/len(node.actions) for a in node.actions}
+    
+    def sample_action(self, node:GameState):
+        return np.random.choice(node.actions, p=list(node.P.values()))
+        
+    
 def _winning_combos():
     for start in range(0, 9, 3):  # three in a row
         yield (start, start + 1, start + 2)
@@ -105,7 +215,6 @@ def _winning_combos():
         yield (start, start + 3, start + 6)
     yield (0, 4, 8)  # down-right diagonal
     yield (2, 4, 6)  # down-left diagonal
-
 
 def _find_winner(tup):
     "Returns None if no winner, True if X wins, False if O wins"
@@ -117,10 +226,31 @@ def _find_winner(tup):
             return True
     return None
 
-
-def new_tic_tac_toe_board() -> TicTacToeBoard:
-    return TicTacToeBoard(tup=(None,) * 9, turn=True, winner=None, terminal=False)
-
-
 if __name__ == "__main__":
-    play_game()
+    # play_game()
+    game = TTTGame()
+    # game.make_move(4)
+    # game.make_move(6)
+    # game.make_move(3)
+    # game.make_move(5)
+    # game.make_move(0)
+    # game.make_move(8)
+    # game.make_move(7)
+    print(game.root)
+    while not game.root.terminal:
+        # a = int(input("Make move: "))
+        # game.make_move(a)
+        # print(game.root)
+        rollout_bar = trange(50000)
+        for i in rollout_bar:
+            game.do_rollout()
+            node = game.root
+            c_expl = [node.N[a] for a in node.actions]
+            c_expl = " ".join([f"{x}" for x in c_expl])
+            q = " ".join([f"{x:.3f}" for x in node.Q.values()])
+            rollout_bar.set_description_str(f"{q} | {c_expl}")
+            # input()
+        a = game.choose()
+        game.make_move(a)
+        print(game.root)
+    
