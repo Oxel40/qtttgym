@@ -324,6 +324,13 @@ def ind2move(n) -> tuple[int, int]:
     j = (2 * n + 2 - 15 * i + i*i)//2
     return i, j
 
+def move2ind(i, j):
+    if i > j:
+        return move2ind(j, i)
+    # return 8*i - (i*i - i)//2
+    # return  8*i - (i*i - i)//2 + j - i - 1
+    return  (15*i - i*i + 2*j - 2)//2
+
 if __name__ == "__main__":
     # play_game()
     # np.random.seed(1)
@@ -333,8 +340,12 @@ if __name__ == "__main__":
     print(game.root)
     # quit()
     while not game.root.terminal:
+        if game.root.terminal: break
+        a = map(int, input("Make move: ").split())
+        game.make_move(move2ind(*a))
+        print(game.root)
         # print(game.root)
-        rollout_bar = trange(30000, ncols=150)
+        rollout_bar = trange(3000, ncols=150)
         for i in rollout_bar:
             game.do_rollout()
             node = game.root
@@ -345,7 +356,5 @@ if __name__ == "__main__":
         a = game.choose()
         game.make_move(a)
         print(game.root)
-        a = map(int, input("Make move: ").split())
-        game.make_move(a)
         # input()
     print(game.root.winner)
