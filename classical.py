@@ -1,29 +1,6 @@
-"""
-An example implementation of the abstract Node class for use in MCTS
-If you run this file then you can play against the computer.
-A tic-tac-toe board is represented as a tuple of 9 values, each either None,
-True, or False, respectively meaning 'empty', 'X', and 'O'.
-The board is indexed by row:
-0 1 2
-3 4 5
-6 7 8
-For example, this game board
-O - X
-O X -
-X - -
-corrresponds to this tuple:
-(False, None, True, False, True, None, True, None, None)
-"""
-
-from collections import namedtuple
-from random import choice
-from mcts import MCTS, Node
 import numpy as np
 import math
 from tqdm import trange
-
-_TTTB = namedtuple("TicTacToeBoard", "tup turn winner terminal")
-
 
 class TTTGame():
     class GameState():
@@ -51,9 +28,11 @@ class TTTGame():
             self.Q:dict = {a : 0 for a in self.actions}
             self.P:dict|None = None
 
+            # Tree search reference counter
+            self.ref_count = 0
 
         def __hash__(self) -> int:
-            return hash(self.board + self.turn + self.winner + self.terminal)
+            return hash(self.board) # + (self.turn, self.winner, self.terminal))
         
         def __str__(self) -> str:
             to_char = lambda v: ("X" if v is True else ("O" if v is False else " "))
@@ -70,7 +49,11 @@ class TTTGame():
 
     def __init__(self) -> None:
         self.root = self.GameState((None,)*9, True, None, False)
-        self.c_puct = 10
+        self.root.ref_count += 1
+
+        self.c_puct = 1
+        self.nodes:dict[int, self.GameState] = dict()
+        self.nodes[hash(self.root)] = self.root
 
     def make_move(self, action):
         if action not in self.root.children:
@@ -78,59 +61,80 @@ class TTTGame():
         if self.root.children[action] is None:
             # node has not been fully expanded
             # only expand the child of this action
+            print("Expanding in MOVE")
             self._expand_child(self.root, action)
-        self.root = self.root.children[action]
+        
+        new_root = self.root.children[action]
+        for child in self.root.children.values():
+            if hash(child) == hash(new_root): continue
+            self.prune_borrowcheck(child)
+
+        self.root.ref_count -= 1
+        if self.root.ref_count == 0:
+            self.nodes.pop(hash(self.root))
+        self.root = new_root
+
+    def prune_borrowcheck(self, node:GameState):
+        # subtract 1 from the borrow checkers
+        # if a borrow checker hits 0
+        # remove the node from memory
+        if node is None:
+            return
+        
+        for child in node.children.values():
+            self.prune_borrowcheck(child)
+        if node.ref_count == 0:
+            print(node)
+            input()
+        node.ref_count -= 1
+        if node.ref_count == 0:
+            self.nodes.pop(hash(node))
+            # del self.nodes[hash(node)]
 
     def choose(self):
         n = self.root
         def score(a):
-            # if n.turn:
             if n.N[a] == 0:
                 return -math.inf
             return n.Q[a]
-            # else:
-            #     if n.N[a] == 0:
-            #         return math.inf
-            #     return -n.Q[a]
 
-        # print()
-        # print([score(a) for a in self.root.actions])
         a_best = max(self.root.actions, key=score)
-        # print(a_best)
         return a_best
     
-    def _expand(self, node:GameState):
-        for a in node.actions:
-            if a in node.children: continue
-            self._expand_child(node, a)
-    
     def _expand_child(self, node:GameState, action):
-        node.children[action] = self._step(node, action)
+        new_node = self._step(node, action)
+        # print(new_node)
+        node_hash = hash(new_node)
+        if node_hash in self.nodes:
+            # print("CACHE HIT")
+            # print(new_node)
+            # print(self.nodes[node_hash])
+            # print(new_node.N_tot, self.nodes[node_hash].N_tot)
+            # input()
+            new_node = self.nodes[node_hash]
 
-    def _step(self, node:GameState, action):
+        else:
+            self.nodes[node_hash] = new_node
+        #     print("CACHE MISS")
+        # input()
+        node.children[action] = new_node
+        new_node.ref_count += 1
+        
+
+    def _step(self, node:GameState, action) -> GameState:
         new_board = node.board[:action] + (node.turn,) + node.board[action + 1 :]
         turn = not node.turn
         winner = _find_winner(new_board)
         is_terminal = (winner is not None) or not any(v is None for v in new_board)
-        return self.GameState(new_board, turn, winner, is_terminal)
+        new_state = self.GameState(new_board, turn, winner, is_terminal)
+        return new_state
 
     def do_rollout(self):
         "Make the tree one layer better. (Train for one iteration.)"
         # select until we uct select a new node
         path, leaf = self._select(self.root)
-        # print(path)
-        # input()
-        # simulate from the new leaf to the bottom
-        # print()
-        # print("Start")
-        # print(leaf)
         reward = self._simulate(leaf)
-        # print(reward)
-        # input()
         path.append((leaf, None))
-        # for s, _ in path:
-        #     print(s)
-        # backprop
         self._backpropogate(path, reward)
         
     
@@ -144,7 +148,7 @@ class TTTGame():
             node = node.children[a]
         return path, node
 
-    def _simulate(self, node:GameState) -> list[tuple[GameState, int]]:
+    def _simulate(self, node:GameState) -> float:
         # Simulates from the node to the bottom
         invert_reward = True
         while not node.terminal:
@@ -153,8 +157,8 @@ class TTTGame():
                 node.P = self.get_action_probs(node)
             # Sample an action according to P
             a = self.sample_action(node)
-            self._expand_child(node, a)
-            node = node.children[a]
+            node = self._step(node, a)
+            # node = node.children[a]
             # node = self._step(node, a)
             invert_reward = not invert_reward
         r = self._reward(node)
@@ -188,6 +192,8 @@ class TTTGame():
     def _uct_select(self, node:GameState):
         # Return the selected action
         def uct(a):
+            if node.N[a] == 0:
+                return math.inf
             # if node.turn:
             U = node.P[a] * math.sqrt(node.N_tot)/(1 + node.N[a]) 
             # if node.turn:
@@ -226,31 +232,39 @@ def _find_winner(tup):
             return True
     return None
 
+def check_refcount(node:TTTGame.GameState):
+    if node is None:
+        return
+    print(node)
+    print(node.ref_count)
+    for child in node.children.values():
+        check_refcount(child)
+
 if __name__ == "__main__":
     # play_game()
     game = TTTGame()
-    # game.make_move(4)
-    # game.make_move(6)
-    # game.make_move(3)
-    # game.make_move(5)
-    # game.make_move(0)
-    # game.make_move(8)
-    # game.make_move(7)
+    # game.root = game.GameState((None, True, None, False, False, True, True, None, False), True, None, False)
     print(game.root)
+    n = 0
     while not game.root.terminal:
         # a = int(input("Make move: "))
         # game.make_move(a)
         # print(game.root)
-        rollout_bar = trange(50000)
+        rollout_bar = trange(5000, ncols=150)
         for i in rollout_bar:
             game.do_rollout()
             node = game.root
             c_expl = [node.N[a] for a in node.actions]
             c_expl = " ".join([f"{x}" for x in c_expl])
             q = " ".join([f"{x:.3f}" for x in node.Q.values()])
-            rollout_bar.set_description_str(f"{q} | {c_expl}")
+            rollout_bar.set_description_str(f"{q} | {c_expl} | {len(game.nodes)}")
+        # print(game.nodes)
             # input()
+        # print(len(game.nodes))
+        # check_refcount(game.root)
         a = game.choose()
         game.make_move(a)
         print(game.root)
-    
+        input()
+        # # quit()
+        n += 1
