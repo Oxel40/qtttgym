@@ -158,6 +158,7 @@ class QTTTGame():
         self.nodes:dict[int, self.GameState] = dict()
         self.nodes[hash(self.root)] = self.root
         self.net = net
+        self.root.P = self.get_action_probs(self.root)
 
 
     def make_move(self, action):
@@ -232,16 +233,26 @@ class QTTTGame():
         # select until we uct select a new node
         path, leaf = self._select(self.root)
         r_tot = 0
-        N = 10
-        for _ in range(N):
-            r = self._simulate(leaf)
-            r_tot += r if leaf.turn else -r
+        # N = 10
+        # for _ in range(N):
+            # r = self._simulate(leaf)
+            # r_tot += r if leaf.turn else -r
+        if not leaf.terminal:
+            leaf.P = self.get_action_probs(leaf)
+            r_tot, _ = self.net.forward(leaf.to_vector())
+        else:
+            r_tot = self._reward(leaf)
+            r_tot = r_tot if leaf.turn else -r_tot
+        # input()
+        # print(leaf)
+        # print(list(leaf.children.values()))
+        # print(r_tot)
         # input()
         path.append((leaf, None))
         # for s, _ in path:
         #     print(s)
         # backprop
-        self._backpropogate(path, r_tot/N)
+        self._backpropogate(path, float(r_tot))
         
     
     def _select(self, node:GameState) -> tuple[list[GameState], GameState]:
@@ -371,50 +382,96 @@ def move2ind(i, j):
 
 def play_game(net:Model, n_rollouts=10):
     game = QTTTGame(net)
-    states = [game.root.to_vector()]
+    states = [game.root.to_vector().tolist()]
     actions = []
     while not game.root.terminal:
-        rollout_bar = range(n_rollouts)
+        rollout_bar = trange(n_rollouts)
         for i in rollout_bar:
             game.do_rollout()
+            node = game.root
+            qvals = sorted(list(node.Q.items()), key=lambda x: x[1], reverse=True)
+            q = " ".join([f"{len(game.root.moves)} | {ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
+            rollout_bar.set_description_str(f"{q}")
         a = game.choose()
         game.make_move(a)
-        states.append(game.root.to_vector())
+        states.append(game.root.to_vector().tolist())
         actions.append(a)
+    # print(game.root)
+        # input()
     return states, actions, game.root.winner
+
+def expand_symetries(states, actions):
+    # Return all symmetric duplicates
+    ...
 
 if __name__ == "__main__":
     # play_game()
     # np.random.seed(1)
     # random.seed(1)
     net = Model()
-    states, actions, winner = play_game(net)
-    
-    # print(states)
-    for ep in range(100):
-        v_target = 0
-        if winner:
-            v_target = 1
-        elif winner:
-            v_target = -1
-        J:pt.Tensor = 0.
-        alpha = 0.5
-        for i in range(len(actions)):
-            s = states[i]
-            a = actions[i]
-            v, logits = net.forward(s)
-            # print(logits)
-            # print(a)
-            logp = pt.log_softmax(logits, -1)
-            H = net.entropy(s)
-            # print(H, logp[a])
-            # input()
-            J += (v - v_target)**2 - logp[a] - alpha * H
-            v_target = -v_target
-        net.optim.zero_grad()
-        # print(J)
-        J.backward()
-        net.optim.step()
+    alpha = 0.9
+    for run in range(100):
+        M = 10
+        s_batch = []
+        a_batch = []
+        v_batch = []
+        done = []
+        for _ in range(M):
+            states, actions, winner = play_game(net, n_rollouts=3)
+            v_target = 0
+            if winner:
+                v_target = 1
+            elif winner:
+                v_target = -1
+            v = [0] * len(states)
+            for i in range(len(states)):
+                v[i] = v_target
+                v_target = -v_target
+            s_batch.extend(states)
+            a_batch.extend(actions)
+            v_batch.extend(v)
+            done.extend([False] * len(actions))
+            done.append(True)
+        # print(s_batch)
+        s_batch = pt.tensor(s_batch)
+        a_batch = pt.tensor(a_batch)
+        v_batch = pt.tensor(v_batch)
+        not_done = pt.tensor(done, dtype=bool).logical_not()
+        print(s_batch.shape, a_batch.shape, v_batch.shape, not_done.shape)
+        v, logits = net.forward(s_batch)
+        logits = logits[not_done]
+        logp = pt.log_softmax(logits, dim=-1)
+        J = -pt.take_along_dim(logp, a_batch[:, None], dim=-1).squeeze(-1)
+        H = net.entropy(s_batch[not_done])
+        print(H.shape)
+        L = 0.5*(v - v_batch).pow(2)
+        loss = L.mean() + J.mean(0) + alpha * H.mean(0)
+        print(L.mean(), J.mean(), H.mean())
+        quit()
+
+        for ep in range(10):
+            v_target = 0
+            if winner:
+                v_target = 1
+            elif winner:
+                v_target = -1
+            J:pt.Tensor = 0.
+            alpha = 0.5
+            for i in range(len(actions)):
+                s = states[i]
+                a = actions[i]
+                v, logits = net.forward(s)
+                # print(logits)
+                # print(a)
+                logp = pt.log_softmax(logits, -1)
+                H = net.entropy(s)
+                # print(H, logp[a])
+                # input()
+                J += (v - v_target)**2 - logp[a] - alpha * H
+                v_target = -v_target
+            net.optim.zero_grad()
+            J.backward()
+            net.optim.step()
         # input()
     # v, p = Net.forward(game.root.to_vector(), game.root.action_mask())
     
