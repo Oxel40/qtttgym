@@ -113,6 +113,3 @@ class Board:
         p2_round = p2_round if p2_round < 10 else -1
 
         return p1_round, p2_round
-
-    def hash(self):
-        return hash(tuple(self.moves)) + hash(tuple(self.board))

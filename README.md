@@ -44,6 +44,4 @@ where $\tau$ is a temperature which controls the level of exploration. The MCTS 
 
 Some improvements that are perhaps needed but perhaps not explicit
 
-- The choose function doesn't actually prune the tree since all of the nodes are stored in a dictionary "children" which maps the a parent node to all of its children. So storing the nodes in an actual tree structure is perhaps the most efficient
-- Currently we have a Node.find_children function which returns a set of all child nodes. This function is unessesary and we only need to return the available actions. We are essentially expanding a node if it hasn't been expanded. This is time and memory inefficient
-- OFC we need to do self play and RL on this, this is the key ingredient in order to make an unbeatable AI.
+- [ ] OFC we need to do self play and RL on this, this is the key ingredient in order to make an unbeatable AI.
