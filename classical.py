@@ -67,29 +67,29 @@ class TTTGame():
         new_root = self.root.children[action]
         for child in self.root.children.values():
             if hash(child) == hash(new_root): continue
-            self.prune_borrowcheck(child)
+            self._prune(child)
 
         self.root.ref_count -= 1
         if self.root.ref_count == 0:
             self.nodes.pop(hash(self.root))
         self.root = new_root
 
-    def prune_borrowcheck(self, node:GameState):
+    def _prune(self, node:GameState):
         # subtract 1 from the borrow checkers
         # if a borrow checker hits 0
         # remove the node from memory
         if node is None:
             return
-        
-        for child in node.children.values():
-            self.prune_borrowcheck(child)
-        if node.ref_count == 0:
-            print(node)
-            input()
         node.ref_count -= 1
-        if node.ref_count == 0:
-            self.nodes.pop(hash(node))
-            # del self.nodes[hash(node)]
+        if node.ref_count > 0:
+            return
+            # self.nodes.pop(hash(node))
+        # print("PRUNED")
+        # print(node)
+        # input()
+        del self.nodes[hash(node)]
+        for child in node.children.values():
+            self._prune(child)
 
     def choose(self):
         n = self.root
@@ -133,9 +133,13 @@ class TTTGame():
         "Make the tree one layer better. (Train for one iteration.)"
         # select until we uct select a new node
         path, leaf = self._select(self.root)
-        reward = self._simulate(leaf)
+        r_tot = 0
+        n_runs = 30
+        for i in range(n_runs):
+            r_tot += self._simulate(leaf)/n_runs
+
         path.append((leaf, None))
-        self._backpropogate(path, reward)
+        self._backpropogate(path, r_tot)
         
     
     def _select(self, node:GameState) -> tuple[list[GameState], GameState]:
@@ -250,7 +254,7 @@ if __name__ == "__main__":
         # a = int(input("Make move: "))
         # game.make_move(a)
         # print(game.root)
-        rollout_bar = trange(5000, ncols=150)
+        rollout_bar = trange(3000, ncols=150)
         for i in rollout_bar:
             game.do_rollout()
             node = game.root
@@ -260,11 +264,13 @@ if __name__ == "__main__":
             rollout_bar.set_description_str(f"{q} | {c_expl} | {len(game.nodes)}")
         # print(game.nodes)
             # input()
-        # print(len(game.nodes))
         # check_refcount(game.root)
         a = game.choose()
+        n_prev = len(game.nodes)
         game.make_move(a)
+        print(len(game.nodes) - n_prev)
+        print(len(game.nodes))
         print(game.root)
-        input()
+        # input()
         # # quit()
-        n += 1
+        # n += 1
