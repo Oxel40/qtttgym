@@ -14,7 +14,7 @@ X - -
 corrresponds to this tuple:
 (False, None, True, False, True, None, True, None, None)
 """
-
+from torch.distributions import Categorical
 from collections import namedtuple
 from random import choice
 import numpy as np
@@ -22,11 +22,10 @@ import math
 from tqdm import trange
 import qtttgym
 import random
+from nn import Model
 from copy import deepcopy
+import torch as pt
 
-_TTTB = namedtuple("TicTacToeBoard", "tup turn winner terminal")
-
-NodeType = int 
 
 class QTTTGame():
     class GameState(qtttgym.Board):
@@ -56,10 +55,29 @@ class QTTTGame():
             self.N:dict = {a : 0 for a in self.actions}
             self.W:dict = {a : 0 for a in self.actions}
             self.Q:dict = {a : 0 for a in self.actions}
-            self.P:dict | None = None
+            self.P:np.ndarray | None = None
+            self.cat:Categorical | None = None
+        
+        def to_vector(self):
+            classic_state = np.zeros((9, 10))
+            for i in range(9):
+                classic_state[i][self.board[i]] = 1
+            quantum_state = np.zeros((9, 10))
+            isqrt2 = 1/math.sqrt(9)
+            for (i, j, t) in self.moves:
+                quantum_state[i, t] = isqrt2
+                quantum_state[j, t] = isqrt2
 
-            self.ref_count = 0
-    
+            qsets = set()
+            for s in self.qstructs:
+                qsets = qsets.union(s)
+            
+            for s in range(9):
+                if s not in qsets:
+                    quantum_state[s, -1] = 1.
+                    continue
+            return np.concatenate((classic_state, quantum_state), axis=0)
+
         def update_actions(self):
             self.actions = list()
             for i in range(36):
@@ -72,6 +90,13 @@ class QTTTGame():
             self.W:dict = {a : 0 for a in self.actions}
             self.Q:dict = {a : 0 for a in self.actions}
             self.P:dict | None = None
+
+        def action_mask(self):
+            a = np.zeros(36).astype(bool)
+            for i in self.actions:
+                a[i] = True
+            return a
+            
 
         def update_winner(self):
             p1, p2 = self.check_win()
@@ -124,11 +149,14 @@ class QTTTGame():
         def __repr__(self) -> str:
             return f"GameState({self.board},{self.P is not None})"
 
-    def __init__(self) -> None:
+    def __init__(self, net:Model) -> None:
         self.root = self.GameState([-1]*9, [], True, None, False)
         self.c_puct = 1
         self.nodes:dict[int, self.GameState] = dict()
         self.nodes[hash(self.root)] = self.root
+        self.net = net
+        self.root.P = self.get_action_probs(self.root)
+
 
     def make_move(self, action):
         if action not in self.root.children:
@@ -137,14 +165,7 @@ class QTTTGame():
             # node has not been fully expanded
             # only expand the child of this action
             self._expand_child(self.root, action)
-        new_root:self.GameState = np.random.choice(self.root.children[action])
-        for a in self.root.actions:
-            for child in self.root.children[a]:
-                if child == new_root: continue
-                self._prune(child)
-        # The root should have no reference counter
-        del self.nodes[hash(self.root)]
-        self.root = new_root
+        self.root = np.random.choice(self.root.children[action])
 
     def choose(self):
         n = self.root
@@ -165,27 +186,8 @@ class QTTTGame():
         return a_best
     
     def _expand_child(self, node:GameState, action):
-        new_nodes = self._step(node, action)
-        node.children[action] = []
-        for n in new_nodes:
-            n_hash = hash(n)
-            if n_hash in self.nodes:
-                n = self.nodes[n_hash]
-            else:
-                self.nodes[n_hash] = n
-            node.children[action].append(n)
-            n.ref_count += 1
-    
-    def _prune(self, node:GameState):
-        if node is None:
-            return
-        node.ref_count -= 1
-        if node.ref_count > 0: return
-        del self.nodes[hash(node)]
-        for a in node.actions:
-            if node.children[a] is None: continue
-            for child in node.children[a]:
-                self._prune(child)
+        nodes = self._step(node, action)
+        node.children[action] = nodes
         
     def _step(self, node:GameState, action) -> list[GameState]:
         move = ind2move(action)
@@ -230,14 +232,27 @@ class QTTTGame():
         r_tot = 0
         N = 10
         for _ in range(N):
-            r = self._simulate(leaf)
+            # print("START SIMULATING")
+            r = self._simulate(leaf) / N
+            # print("DONE")
+            # input()
             r_tot += r if leaf.turn else -r
+        # if not leaf.terminal:
+        #     leaf.P = self.get_action_probs(leaf)
+        #     r_tot, _ = self.net.forward(leaf.to_vector())
+        # else:
+        #     r_tot = self._reward(leaf)
+        #     r_tot = r_tot if leaf.turn else -r_tot
+        # input()
+        # print(leaf)
+        # print(list(leaf.children.values()))
+        # print(r_tot)
         # input()
         path.append((leaf, None))
         # for s, _ in path:
         #     print(s)
         # backprop
-        self._backpropogate(path, r_tot/N)
+        self._backpropogate(path, float(r_tot))
         
     
     def _select(self, node:GameState) -> tuple[list[GameState], GameState]:
@@ -257,8 +272,12 @@ class QTTTGame():
             if node.P is None:
                 # Evaluate the action probabilities of this Node
                 node.P = self.get_action_probs(node)
+            # print(node)
+            # print(node.P)
             # Sample an action according to P
             a = self.sample_action(node)
+            # print(a)
+            # input()
             nodes = self._step(node, a)
             node = np.random.choice(nodes)
             # node = node.children[a]
@@ -321,10 +340,13 @@ class QTTTGame():
 
     def get_action_probs(self, node:GameState) -> dict:
         # This should be replaced by a policy NN
-        return {a : 1/len(node.actions) for a in node.actions}
+        # print(node)
+        _, logits = self.net.forward(node.to_vector())
+        node.cat = Categorical(logits=logits)
+        return node.cat.probs
     
     def sample_action(self, node:GameState):
-        return np.random.choice(node.actions, p=list(node.P.values()))
+        return int(node.cat.sample())
         
     
 def _winning_combos():
@@ -358,33 +380,108 @@ def move2ind(i, j):
     # return  8*i - (i*i - i)//2 + j - i - 1
     return  (15*i - i*i + 2*j - 2)//2
 
+def play_game(net:Model, n_rollouts=10):
+    game = QTTTGame(net)
+    states = [game.root.to_vector().tolist()]
+    actions = []
+    while not game.root.terminal:
+        rollout_bar = range(n_rollouts)
+        for i in rollout_bar:
+            game.do_rollout()
+            # node = game.root
+            # qvals = sorted(list(node.Q.items()), key=lambda x: x[1], reverse=True)
+            # q = " ".join([f"{len(game.root.moves)} | {ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
+            # rollout_bar.set_description_str(f"{q}")
+        a = game.choose()
+        game.make_move(a)
+        states.append(game.root.to_vector().tolist())
+        actions.append(a)
+    # print(game.root)
+        # input()
+    return states, actions, game.root.winner
+
+def expand_symetries(states, actions):
+    # Return all symmetric duplicates
+    ...
+
+def play_vs_ai(net:Model):
+    game = QTTTGame(net)
+    print(game.root)
+    while not game.root.terminal:
+        node = game.root
+        qvals = sorted(list(zip(np.arange(36), node.P)), key=lambda x: x[1], reverse=True)
+        q = " ".join([f"{ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
+        print(q)
+
+        rollout_bar = trange(300)
+        for i in rollout_bar:
+            game.do_rollout()
+            qvals = sorted(list(node.Q.items()), key=lambda x: x[1], reverse=True)
+            q = " ".join([f"{len(game.root.moves)} | {ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
+            rollout_bar.set_description_str(f"{q}")
+        a = game.choose()
+        game.make_move(a)
+        print(game.root)
+
+        if game.root.terminal: break
+        move = map(int, input().split())
+        a = move2ind(*move)
+        game.make_move(a)
+        print(game.root)
+    print(game.root.winner)
+    quit()
+
 if __name__ == "__main__":
     # play_game()
     # np.random.seed(1)
     # random.seed(1)
-    
-    game = QTTTGame()
-    print(game.root)
+    net = Model()
+    net.load_state_dict(pt.load("model.pt"))
+    # play_vs_ai(net)
     # quit()
-    while not game.root.terminal:
-        # a = map(int, input("Make move: ").split())
-        # game.make_move(move2ind(*a))
-        # if game.root.terminal: break
-        # print(game.root)
-        # print(game.root)
-        rollout_bar = trange(3000, ncols=130)
-        for i in rollout_bar:
-            game.do_rollout()
-            node = game.root
-            qvals = sorted(list(node.Q.items()), key=lambda x: x[1], reverse=True)
-
-            q = " ".join([f"{len(game.root.moves)} | {ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
-            rollout_bar.set_description_str(f"{q}")
-        a = game.choose()
-        n_prev = len(game.nodes)
-        game.make_move(a)
-        print(len(game.nodes) - n_prev)
-        print(len(game.nodes))
-        print(game.root)
-        # input()
-    print(game.root.winner)
+    alpha = 0.3
+    runs = 30
+    decay = (0.01/alpha) **(1/runs)
+    for run in range(runs):
+        M = 20
+        s_batch = []
+        a_batch = []
+        v_batch = []
+        done = []
+        for _ in trange(M, desc="Rollouts"):
+            states, actions, winner = play_game(net, n_rollouts=20)
+            v_target = 0
+            if winner:
+                v_target = 1
+            elif winner:
+                v_target = -1
+            v = [0] * len(states)
+            for i in range(len(states)):
+                v[i] = v_target
+                v_target = -v_target
+            s_batch.extend(states)
+            a_batch.extend(actions)
+            v_batch.extend(v)
+            done.extend([False] * len(actions))
+            done.append(True)
+        # print(s_batch)
+        s_batch = pt.tensor(s_batch)
+        a_batch = pt.tensor(a_batch)
+        v_batch = pt.tensor(v_batch)
+        not_done = pt.tensor(done, dtype=bool).logical_not()
+        # print(s_batch.shape, a_batch.shape, v_batch.shape, not_done.shape)
+        EPOCHS = trange(1000)
+        for ep in EPOCHS:
+            v, logits = net.forward(s_batch)
+            logits = logits[not_done]
+            logp = pt.log_softmax(logits, dim=-1)
+            J = -pt.take_along_dim(logp, a_batch[:, None], dim=-1).squeeze(-1)
+            H = net.entropy(s_batch[not_done])
+            L = 0.5*(v - v_batch).pow(2)
+            loss = L.mean() + J.mean(0) - alpha * H.mean(0)
+            net.optim.zero_grad()
+            loss.backward()
+            net.optim.step()
+            EPOCHS.set_description_str(f"L: {float(L.mean()):.2f}, J: {float(J.mean()):.2f}, H: {float(H.mean()):.2f}")
+        alpha *= decay
+        pt.save(net.state_dict(), "model.pt")
