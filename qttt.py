@@ -59,6 +59,9 @@ class QTTTGame():
             self.P:dict | None = None
 
             self.ref_count = 0
+
+            # RL stuff
+            self.dist = None
     
         def update_actions(self):
             self.actions = list()
@@ -88,6 +91,32 @@ class QTTTGame():
                 self.terminal = True
             self.terminal = len(self.moves) == 9 or self.terminal
 
+        def to_vector(self):
+            classic_state = np.zeros((9, 10))
+            for i in range(9):
+                classic_state[i][self.board[i]] = 1
+            quantum_state = np.zeros((9, 10))
+            isqrt2 = 1/math.sqrt(9)
+            for (i, j, t) in self.moves:
+                quantum_state[i, t] = isqrt2
+                quantum_state[j, t] = isqrt2
+
+            qsets = set()
+            for s in self.qstructs:
+                qsets = qsets.union(s)
+            
+            for s in range(9):
+                if s not in qsets:
+                    quantum_state[s, -1] = 1.
+                    continue
+            return np.concatenate((classic_state, quantum_state), axis=0)
+        
+        def action_mask(self):
+            a = np.zeros(36).astype(bool)
+            for i in self.actions:
+                a[i] = True
+            return a
+        
         def __hash__(self) -> int:
             return hash(tuple(self.board) + tuple(self.moves))
         
@@ -122,7 +151,7 @@ class QTTTGame():
             return out_string
         
         def __repr__(self) -> str:
-            return f"GameState({self.board},{self.P is not None})"
+            return f"GameState({self.board},{self.winner})"
 
     def __init__(self) -> None:
         self.root = self.GameState([-1]*9, [], True, None, False)
@@ -139,6 +168,7 @@ class QTTTGame():
             self._expand_child(self.root, action)
         new_root:self.GameState = np.random.choice(self.root.children[action])
         for a in self.root.actions:
+            if self.root.children[a] is None: continue
             for child in self.root.children[a]:
                 if child == new_root: continue
                 self._prune(child)
@@ -261,35 +291,19 @@ class QTTTGame():
             a = self.sample_action(node)
             nodes = self._step(node, a)
             node = np.random.choice(nodes)
-            # node = node.children[a]
-            # node = self._step(node, a)
             invert_reward = not invert_reward
-        # print(node)
-        # print(node.board)
-        # print(node.check_win())
-        # print(node.winner)
         r = self._reward(node)
-        # if invert_reward:
-        #     r = -r
-        # print(r)
-        # input()
-        # print("END")
-        # print(node)
-        # print(node.winner, node.turn, invert_reward)
         return r
 
     def _backpropogate(self, path:list[tuple[GameState, int]], r):
         leaf, _ = path.pop()
         while path:
             node, a = path.pop()
-            # print(node)
             r = -r
             node.W[a] += r
             node.N[a] += 1
             node.Q[a] = node.W[a] / node.N[a]
             node.N_tot += 1
-            # print(node.Q)
-            # input()
         
     def _reward(self, node:GameState):
         r = 0
@@ -299,7 +313,6 @@ class QTTTGame():
             r = 1
         else:
             r = -1
-        # if len(node.moves)
         return r
         
         
@@ -307,16 +320,8 @@ class QTTTGame():
     def _uct_select(self, node:GameState):
         # Return the selected action
         def uct(a):
-            # if node.turn:
-            U = node.P[a] * math.sqrt(node.N_tot)/(1 + node.N[a]) 
-            # if node.turn:
+            U = node.P[a] * math.sqrt(node.N_tot)/(1 + node.N[a])
             return node.Q[a] + self.c_puct * U
-            # else:
-            #     return -node.Q[a] + self.c_puct * U
-        # print(node)
-        # for a in node.actions:
-        #     print(a, uct(a))
-        # input()
         return max(node.actions, key=uct)
 
     def get_action_probs(self, node:GameState) -> dict:
@@ -325,25 +330,7 @@ class QTTTGame():
     
     def sample_action(self, node:GameState):
         return np.random.choice(node.actions, p=list(node.P.values()))
-        
-    
-def _winning_combos():
-    for start in range(0, 9, 3):  # three in a row
-        yield (start, start + 1, start + 2)
-    for start in range(3):  # three in a column
-        yield (start, start + 3, start + 6)
-    yield (0, 4, 8)  # down-right diagonal
-    yield (2, 4, 6)  # down-left diagonal
 
-def _find_winner(tup):
-    "Returns None if no winner, True if X wins, False if O wins"
-    for i1, i2, i3 in _winning_combos():
-        v1, v2, v3 = tup[i1], tup[i2], tup[i3]
-        if False is v1 is v2 is v3:
-            return False
-        if True is v1 is v2 is v3:
-            return True
-    return None
 
 def ind2move(n) -> tuple[int, int]:
     i = (17 - math.sqrt(17*17 - 8*n))/2

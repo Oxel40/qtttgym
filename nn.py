@@ -24,7 +24,7 @@ class Model(nn.Module):
             nn.ReLU(),
             nn.Linear(h, 36)
         )
-        self.optim = pt.optim.Adam(self.parameters(), lr=1e-3)
+        self.optim = pt.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-3, amsgrad=True)
         
     
     def forward(self, s:np.ndarray)->tuple[pt.Tensor, pt.Tensor]:
