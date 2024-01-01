@@ -178,30 +178,6 @@ if __name__ == "__main__":
     # np.random.seed(1)
     # random.seed(1)
     net = Model()
-    # net.load_state_dict(pt.load("model.pt"))
-    # ai_wins = 0
-    # ai_losses = 0
-    # draws = 0
-    # for _ in range(100):
-    #     winner = play_vs_ai(net)
-    #     # print(winner)
-    #     if winner == True:
-    #         ai_wins += 1
-    #     elif winner == False:
-    #         ai_losses += 1
-    #     else:
-    #         draws += 1
-    #     winner = play_vs_ai2(net)
-    #     # print(winner)
-    #     if winner == True:
-    #         ai_losses += 1
-    #     elif winner == False:
-    #         ai_wins += 1
-    #     else:
-    #         draws += 1
-
-    #     print(ai_wins, ai_losses, draws)
-    # quit()
     # quit()
     alpha = 1
     runs = 30
