@@ -179,19 +179,10 @@ class QTTTGame():
     def choose(self):
         n = self.root
         def score(a):
-            # if n.turn:
             if n.N[a] == 0:
                 return -math.inf
             return n.Q[a]
-            # else:
-            #     if n.N[a] == 0:
-            #         return math.inf
-            #     return -n.Q[a]
-
-        # print()
-        # print([score(a) for a in self.root.actions])
         a_best = max(self.root.actions, key=score)
-        # print(a_best)
         return a_best
     
     def _expand_child(self, node:GameState, action):
@@ -314,8 +305,6 @@ class QTTTGame():
         else:
             r = -1
         return r
-        
-        
     
     def _uct_select(self, node:GameState):
         # Return the selected action
