@@ -167,11 +167,12 @@ class MCTS(Strategy):
         def __repr__(self) -> str:
             return f"GameState({self.board},{self.winner})"
     
-    def __init__(self, rollouts:int=5000) -> None:
+    def __init__(self, rollouts:int=5000, num_simulations:int=10) -> None:
         super().__init__()
         self.c_puct = 1.
         self.nodes:dict[int, self.GameState] = dict()
         self.num_rollouts = rollouts
+        self.num_simulations = num_simulations
 
     def reset(self, game:qtttgym.Board):
         super().reset(game)
@@ -200,14 +201,14 @@ class MCTS(Strategy):
         self.nodes:dict[int, self.GameState] = dict()
         self.nodes[hash(self.root)] = self.root
     
-    def _rollout(self, num_sims:int=10):
+    def _rollout(self):
         path, leaf = self._select(self.root)
         r_tot = 0
-        for _ in range(num_sims):
+        for _ in range(self.num_simulations):
             r = self._simulate(leaf)
             r_tot += r if leaf.turn else -r
         path.append((leaf, None))
-        self._backpropogate(path, r_tot/num_sims)
+        self._backpropogate(path, r_tot/self.num_simulations)
     
     def _backpropogate(self, path:list[tuple[GameState, int]], r):
         leaf, _ = path.pop()
@@ -332,7 +333,7 @@ class MCTS(Strategy):
         t0 = time.time()
         n = 0
         while time.time() - t0 < thinking_time and n < self.num_rollouts:
-            self._rollout(num_sims=10)
+            self._rollout()
             qvals = sorted(list(self.root.Q.items()), key=lambda x: x[1], reverse=True)
             q = " ".join([f"{len(self.root.moves)} | {ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
             q += f" | {self.root.Ntot}"
