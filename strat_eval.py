@@ -138,7 +138,6 @@ def eval_strats_parallel(strat1: Strategy,
     tmp = [(i, thinking_time) for i in range(num_games)]
 
     with get_context("spawn").Pool(None, worker_init, strats) as pool:
-        # async_res = pool.map_async(functools.partial(rollout, q), tmp)
         print("Starting evaluation...")
         res_iterator = pool.imap_unordered(worker_rollout, tmp)
         for res in res_iterator:
