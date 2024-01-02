@@ -1,36 +1,15 @@
-"""
-An example implementation of the abstract Node class for use in MCTS
-If you run this file then you can play against the computer.
-A tic-tac-toe board is represented as a tuple of 9 values, each either None,
-True, or False, respectively meaning 'empty', 'X', and 'O'.
-The board is indexed by row:
-0 1 2
-3 4 5
-6 7 8
-For example, this game board
-O - X
-O X -
-X - -
-corrresponds to this tuple:
-(False, None, True, False, True, None, True, None, None)
-"""
-
-from collections import namedtuple
-from random import choice
+from strategy import Strategy
+import qtttgym
 import numpy as np
 import math
-from tqdm import trange
-import qtttgym
-import random
+import time
 from copy import deepcopy
+from nn import Model
+import torch as pt
+from torch.distributions import Categorical
 
-_TTTB = namedtuple("TicTacToeBoard", "tup turn winner terminal")
-
-NodeType = int 
-
-class QTTTGame():
+class AlphaZero(Strategy):
     class GameState(qtttgym.Board):
-        
         def __init__(self, board, moves, turn, winner, terminal):
             qtttgym.Board.__init__(self, qtttgym.QEvalClassic())
             # State params
@@ -39,30 +18,28 @@ class QTTTGame():
             self.turn = turn
             self.winner = winner
             self.terminal = terminal
-            # necessary stuff
-            
+
             # actions
             self.actions = list()
             self.children:dict[int, list] = dict()
-            for i in range(36):
-                move = ind2move(i)
+            for a in range(36):
+                move = ind2move(a)
                 if self.board[move[0]] != -1 or self.board[move[1]] != -1:
                     continue
-                self.actions.append(i)
-                self.children[i] = None
-
+                self.actions.append(a)
+                self.children[a] = None
+            
             # MCTS properties
-            self.N_tot = 0
-            self.N:dict = {a : 0 for a in self.actions}
-            self.W:dict = {a : 0 for a in self.actions}
-            self.Q:dict = {a : 0 for a in self.actions}
+            self.Ntot = 0
+            self.N:dict = {a:0 for a in self.actions}
+            self.W:dict = {a:0. for a in self.actions}
+            self.Q:dict = {a:0. for a in self.actions}
             self.P:dict | None = None
+            self.dist:Categorical | None = None
 
+            # details
             self.ref_count = 0
 
-            # RL stuff
-            self.dist = None
-    
         def update_actions(self):
             self.actions = list()
             for i in range(36):
@@ -75,6 +52,7 @@ class QTTTGame():
             self.W:dict = {a : 0 for a in self.actions}
             self.Q:dict = {a : 0 for a in self.actions}
             self.P:dict | None = None
+            self.dist:Categorical | None = None
 
         def update_winner(self):
             p1, p2 = self.check_win()
@@ -120,6 +98,9 @@ class QTTTGame():
         def __hash__(self) -> int:
             return hash(tuple(self.board) + tuple(self.moves))
         
+        def __eq__(self, other) -> bool:
+            return hash(self) == hash(other)
+
         def __str__(self) -> str:
             list_of_buffers = [[' '] * 9 for _ in range(9)]
 
@@ -152,38 +133,86 @@ class QTTTGame():
         
         def __repr__(self) -> str:
             return f"GameState({self.board},{self.winner})"
+    
+    def __init__(self, rollouts:int=5000, num_simulations:int=10, filepath:str="model.pt") -> None:
+        super().__init__()
+        self.c_puct = 1.
+        self.nodes:dict[int, self.GameState] = dict()
+        self.num_rollouts = rollouts
+        self.num_simulations = num_simulations
+        self.model = Model()
+        self.model.load_state_dict(pt.load(filepath))
 
-    def __init__(self) -> None:
-        self.root = self.GameState([-1]*9, [], True, None, False)
-        self.c_puct = 1
+    def reset(self, game:qtttgym.Board):
+        super().reset(game)
+        turn = len(game.moves) % 2 == 0
+        w1, w2 = game.check_win()
+        terminal = False
+        winner = None
+        if w1 > 0 and w2 > 0:
+            winner = w1 < w2
+            terminal = True
+        elif w2 < 0 and w1 > 0:
+            # p1 is the winner
+            winner = True
+            terminal = True
+        elif w1 < 0 and w2 > 0:
+            # p2 is the winner
+            winner = False
+            terminal = True
+        terminal = len(game.moves) == 9 or terminal
+        self.root = self.GameState(
+            game.board.copy(), 
+            game.moves.copy(), 
+            turn, 
+            winner, 
+            terminal)
         self.nodes:dict[int, self.GameState] = dict()
         self.nodes[hash(self.root)] = self.root
+    
+    def _rollout(self):
+        path, leaf = self._select(self.root)
+        r_tot = 0
+        for _ in range(self.num_simulations):
+            r = self._simulate(leaf)
+            r_tot += r if leaf.turn else -r
+        path.append((leaf, None))
+        self._backpropogate(path, r_tot/self.num_simulations)
+    
+    def _backpropogate(self, path:list[tuple[GameState, int]], r):
+        leaf, _ = path.pop()
+        while path:
+            node, a = path.pop()
+            r = -r
+            node.W[a] += r
+            node.N[a] += 1
+            node.Q[a] = node.W[a] / node.N[a]
+            node.Ntot += 1
 
-    def make_move(self, action):
-        if action not in self.root.children:
-            raise Exception("Invalid Action")
-        if self.root.children[action] is None:
-            # node has not been fully expanded
-            # only expand the child of this action
-            self._expand_child(self.root, action)
-        new_root:self.GameState = np.random.choice(self.root.children[action])
-        for a in self.root.actions:
-            if self.root.children[a] is None: continue
-            for child in self.root.children[a]:
-                if child == new_root: continue
-                self._prune(child)
-        # The root should have no reference counter
-        del self.nodes[hash(self.root)]
-        self.root = new_root
-
-    def choose(self):
-        n = self.root
-        def score(a):
-            if n.N[a] == 0:
-                return -math.inf
-            return n.Q[a]
-        a_best = max(self.root.actions, key=score)
-        return a_best
+    def _simulate(self, node:GameState) -> list[tuple[GameState, int]]:
+        # Simulates from the node to the bottom
+        invert_reward = True
+        while not node.terminal:
+            if node.P is None:
+                # Evaluate the action probabilities of this Node
+                node.P = self.get_action_probs(node)
+            # Sample an action according to P
+            a = self.sample_action(node)
+            nodes = self._step(node, a)
+            node = np.random.choice(nodes)
+            invert_reward = not invert_reward
+        r = self._reward(node)
+        return r
+    
+    def _reward(self, node:GameState):
+        r = 0
+        if node.winner is None:
+            return 0
+        if node.winner:
+            r = 1
+        else:
+            r = -1
+        return r
     
     def _expand_child(self, node:GameState, action):
         new_nodes = self._step(node, action)
@@ -243,25 +272,8 @@ class QTTTGame():
         new_node.update_winner()
         out.append(new_node)
         return out
-
-    def do_rollout(self):
-        "Make the tree one layer better. (Train for one iteration.)"
-        # select until we uct select a new node
-        path, leaf = self._select(self.root)
-        r_tot = 0
-        N = 10
-        for _ in range(N):
-            r = self._simulate(leaf)
-            r_tot += r if leaf.turn else -r
-        # input()
-        path.append((leaf, None))
-        # for s, _ in path:
-        #     print(s)
-        # backprop
-        self._backpropogate(path, r_tot/N)
-        
     
-    def _select(self, node:GameState) -> tuple[list[GameState], GameState]:
+    def _select(self, node:GameState):
         path = []
         while (node.P is not None) and not node.terminal:
             a = self._uct_select(node)
@@ -270,56 +282,70 @@ class QTTTGame():
             path.append((node, a))
             node = np.random.choice(node.children[a])
         return path, node
-
-    def _simulate(self, node:GameState) -> list[tuple[GameState, int]]:
-        # Simulates from the node to the bottom
-        invert_reward = True
-        while not node.terminal:
-            if node.P is None:
-                # Evaluate the action probabilities of this Node
-                node.P = self.get_action_probs(node)
-            # Sample an action according to P
-            a = self.sample_action(node)
-            nodes = self._step(node, a)
-            node = np.random.choice(nodes)
-            invert_reward = not invert_reward
-        r = self._reward(node)
-        return r
-
-    def _backpropogate(self, path:list[tuple[GameState, int]], r):
-        leaf, _ = path.pop()
-        while path:
-            node, a = path.pop()
-            r = -r
-            node.W[a] += r
-            node.N[a] += 1
-            node.Q[a] = node.W[a] / node.N[a]
-            node.N_tot += 1
+        ...
         
-    def _reward(self, node:GameState):
-        r = 0
-        if node.winner is None:
-            return 0
-        if node.winner:
-            r = 1
-        else:
-            r = -1
-        return r
-    
     def _uct_select(self, node:GameState):
         # Return the selected action
         def uct(a):
-            U = node.P[a] * math.sqrt(node.N_tot)/(1 + node.N[a])
+            U = node.P[a] * math.sqrt(node.Ntot)/(1 + node.N[a])
             return node.Q[a] + self.c_puct * U
         return max(node.actions, key=uct)
 
     def get_action_probs(self, node:GameState) -> dict:
         # This should be replaced by a policy NN
-        return {a : 1/len(node.actions) for a in node.actions}
+        _, logits = self.model.forward(node.to_vector())
+        cat = Categorical(logits=logits)
+        p = cat.probs
+        node.dist = cat
+        return {a : float(p[a]) for a in node.actions}
     
     def sample_action(self, node:GameState):
-        return np.random.choice(node.actions, p=list(node.P.values()))
+        return int(node.dist.sample())
 
+    def contemplate(self, thinking_time, debug_info=False):
+        t0 = time.time()
+        n = 0
+        while time.time() - t0 < thinking_time and n < self.num_rollouts:
+            self._rollout()
+            qvals = sorted(list(self.root.Q.items()), key=lambda x: x[1], reverse=True)
+            q = " ".join([f"{len(self.root.moves)} | {ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
+            q += f" | {self.root.Ntot}"
+            if debug_info:
+                print(q, end="\r")
+            n += 1
+        if debug_info:
+            print()
+
+    def choose(self):
+        n = self.root
+        def score(a):
+            if n.N[a] == 0:
+                return -math.inf
+            return n.Q[a]
+        a_best = max(self.root.actions, key=score)
+        return a_best
+
+    def sync(self, action):
+        if action not in self.root.children:
+            raise Exception("Invalid Action")
+        if self.root.children[action] is None:
+            # node has not been fully expanded
+            # only expand the child of this action
+            self._expand_child(self.root, action)
+
+        options:list[self.GameState] = self.root.children[action]
+        hashes = [hash(v) for v in options]
+        game_hash = self.GameState.__hash__(self.game)
+        i = hashes.index(game_hash)
+        new_root:self.GameState = options[i]
+        for action in self.root.actions:
+            if self.root.children[action] is None: continue
+            for child in self.root.children[action]:
+                if child == new_root: continue
+                self._prune(child)
+        # The root should have no reference counter
+        del self.nodes[hash(self.root)]
+        self.root = new_root
 
 def ind2move(n) -> tuple[int, int]:
     i = (17 - math.sqrt(17*17 - 8*n))/2
@@ -333,34 +359,3 @@ def move2ind(i, j):
     # return 8*i - (i*i - i)//2
     # return  8*i - (i*i - i)//2 + j - i - 1
     return  (15*i - i*i + 2*j - 2)//2
-
-if __name__ == "__main__":
-    # play_game()
-    # np.random.seed(1)
-    # random.seed(1)
-    
-    game = QTTTGame()
-    print(game.root)
-    # quit()
-    while not game.root.terminal:
-        # a = map(int, input("Make move: ").split())
-        # game.make_move(move2ind(*a))
-        # if game.root.terminal: break
-        # print(game.root)
-        # print(game.root)
-        rollout_bar = trange(3000, ncols=130)
-        for i in rollout_bar:
-            game.do_rollout()
-            node = game.root
-            qvals = sorted(list(node.Q.items()), key=lambda x: x[1], reverse=True)
-
-            q = " ".join([f"{len(game.root.moves)} | {ind2move(x[0])}:{x[1]:.3f}" for x in qvals[:5]])
-            rollout_bar.set_description_str(f"{q}")
-        a = game.choose()
-        n_prev = len(game.nodes)
-        game.make_move(a)
-        print(len(game.nodes) - n_prev)
-        print(len(game.nodes))
-        print(game.root)
-        # input()
-    print(game.root.winner)

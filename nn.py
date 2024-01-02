@@ -7,7 +7,7 @@ import math
 class Model(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        h = 128
+        h = 256
         self.fc = nn.Sequential(
             nn.Linear(180, h),
             nn.ReLU(),
@@ -15,24 +15,16 @@ class Model(nn.Module):
             nn.ReLU(),
             nn.Linear(h, h),
             nn.ReLU(),
-            nn.Linear(h, h),
-            nn.ReLU(),
         )
         self.V_head = nn.Sequential(
-            nn.Linear(h, h),
-            nn.ReLU(),
-            nn.Linear(h, h),
             nn.ReLU(),
             nn.Linear(h, 1),
         )
         self.pi_head = nn.Sequential(
-            nn.Linear(h, h),
-            nn.ReLU(),
-            nn.Linear(h, h),
             nn.ReLU(),
             nn.Linear(h, 36)
         )
-        self.optim = pt.optim.Adam(self.parameters(), lr=1e-3)
+        self.optim = pt.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-3, amsgrad=True)
         
     
     def forward(self, s:np.ndarray)->tuple[pt.Tensor, pt.Tensor]:
@@ -68,16 +60,16 @@ class Model(nn.Module):
         # input()
         return mask
 
-    def entropy(self, s:pt.Tensor):
+    def entropy(self, s:pt.Tensor)->pt.Tensor:
         if isinstance(s, np.ndarray):
             s = pt.tensor(s)
         _, logits = self.forward(s)
-        mask = self.get_mask(s)
-        print(s.shape)
-        print(mask.shape)
-        quit()
-        logp = pt.log_softmax(logits[pt.logical_not(mask)], -1)
-        return -pt.sum(logp.exp() * logp, dim=-1)
+        # mask = self.get_mask(s)
+        # print(logits)
+        # print(mask)
+        p = pt.softmax(logits, -1)
+        logp = pt.log(p + 1e-7)
+        return -pt.sum(logp * p, -1)
 
 
 def ind2move(n) -> tuple[int, int]:
