@@ -100,3 +100,11 @@ if __name__ == "__main__":
     eval_strats(AlphaZero(rollouts=300), 
                 MCTS(rollouts=3000), 
                 thinking_time=math.inf)
+    print("Evaluating: MCTS(300) vs MCTS(3000)")
+    eval_strats(MCTS(rollouts=300), 
+                MCTS(rollouts=3000), 
+                thinking_time=math.inf)
+    print("Evaluating: AlphaZero(300) vs MCTS(300)")
+    eval_strats(AlphaZero(rollouts=300), 
+                MCTS(rollouts=300), 
+                thinking_time=math.inf)
