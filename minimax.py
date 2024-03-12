@@ -27,6 +27,50 @@ def move2ind(i, j):
     # return  8*i - (i*i - i)//2 + j - i - 1
     return  (15*i - i*i + 2*j - 2)//2
 
+class CircularBuffer():
+    def __init__(self, buf_size:int) -> None:
+        self.bufsize = buf_size
+        self.k = 0
+        self.n = 0
+
+        self.state_list = np.zeros(buf_size, dtype=object)
+        self.hashes = set()
+    
+    def add(self, s):
+        if s in self.hashes:
+            return
+        k = self.k
+        if self.state_list[k] != 0:
+            self.hashes.remove(self.state_list[k])
+        self.state_list[k] = s
+        self.hashes.add(s)
+        
+        self.k = (k + 1) % self.bufsize
+        self.n = min(self.n + 1, self.bufsize)
+        
+    
+    def get_batch(self, batchsize:int):
+        i = np.random.randint(0, self.n, batchsize)
+        return self.state_list[i]
+
+    def load(self):
+        try:
+            self.hashes = pickle.load(open("states.pkl", 'rb'))
+            self.n = min(len(self.hashes), self.bufsize)
+            self.k = self.n % self.bufsize
+            self.state_list[:self.n] = np.array(list(self.hashes))
+            print(f"Sucessfully loaded {self.n} states")
+        except:
+            self.n = 0
+            self.hashes = set()
+            print("Loading buffer failed")
+
+    def save(self):
+        pickle.dump(self.hashes, open("states.pkl", "wb"))
+    
+    def __len__(self):
+        return self.n
+
 class MiniMax(Strategy):
     
     class GameState(qtttgym.Board):
@@ -164,7 +208,7 @@ class MiniMax(Strategy):
     def __init__(self, train=False, load_nn=True) -> None:
         super().__init__()
         self.Q = QNet(1, lr=1e-3)
-        self.model = Model(1, lr=1e-3)
+        self.model = Model(1, lr=1e-4)
         self.model_slow = Model(1)
         self.advesary = Model(1)
         # self.Q:QNet = pt.compile(self.Q)
@@ -174,9 +218,10 @@ class MiniMax(Strategy):
         self.nodes:dict[int, self.GameState] = dict()
         self.tau = 0.005
         self.tau2 = 0.#01*self.tau
-        self.states = set()
+        self.buffer = CircularBuffer(1000000)
         self.train_mode = train
-        self.batch_size = 16
+        self.batch_size = 64
+        self.advesary_sync_time = 200000
         if train:
             self.writer = SummaryWriter()
         self.it = 0
@@ -338,7 +383,6 @@ class MiniMax(Strategy):
         
     
     def train_agent(self, num_iters, sgd_loadbar=True):
-        states = list(self.states)
         all_actions = np.arange(36)
         game = qtttgym.Board(qtttgym.QEvalClassic())
         root = self.GameState(game.board, game.moves, True, None, False).to_vector()
@@ -349,13 +393,13 @@ class MiniMax(Strategy):
             "U_":[]
         }
         if self.train_mode:
-            self.writer.add_scalar("stats/num_states", len(self.states), self.it)
+            self.writer.add_scalar("stats/num_states", len(self.buffer), self.it)
         if sgd_loadbar:
             EPOCHS = trange(num_iters, ncols=150)
         else:
             EPOCHS = range(num_iters)
         for _ in EPOCHS:
-            s_batch:list[self.GameState] = np.random.choice(states, size=self.batch_size)
+            s_batch:list[self.GameState] = self.buffer.get_batch(self.batch_size)
             # s_batch, a_batch, q_target = self.calc_td_target(s_batch)
             s_batch, a_batch, q_target = self.calc_oracle_td(s_batch)
             # print(q_target)
@@ -374,7 +418,7 @@ class MiniMax(Strategy):
             vloss = vloss.mean()
             piloss = piloss.mean()
             self.model.optim.zero_grad()
-            (vloss + piloss).backward()
+            (10*vloss + piloss).backward()
             self.model.optim.step()
             
             self.slow_update()
@@ -393,7 +437,11 @@ class MiniMax(Strategy):
                 self.writer.add_scalar("value/best 1st move", float(q[0]), self.it)
                 self.writer.add_scalar("value/worst 1st move", float(q[-1]), self.it)
                 self.it += 1
-
+                if (self.it + 1) % self.advesary_sync_time == 0:
+                    self.advesary.load_state_dict(self.model.state_dict())
+                    self.model.optim = pt.optim.Adam(self.model.parameters(), lr=1e-4)
+                    self.Q.optim = pt.optim.Adam(self.model.parameters(), lr=1e-3)
+                    
             data["loss"].append(float(qloss))
             data["U"].append(float(q[0, 0]))
             data["U_"].append(float(q[-1, 0]))
@@ -446,7 +494,7 @@ class MiniMax(Strategy):
     def rollout(self):
         game = qtttgym.Board(qtttgym.QEvalClassic())
         node = self.GameState(game.board, game.moves, True, None, False)
-        self.states.add(node)
+        self.buffer.add(node)
         isplayer1 = np.random.uniform(0, 1) < 0.5
         while not node.terminal:
             if not (isplayer1 ^ node.turn):
@@ -455,7 +503,7 @@ class MiniMax(Strategy):
                 a = self.adversary_choose(node)
 
             sn = self._step(node, a)
-            self.states.add(sn)
+            self.buffer.add(sn)
             node = sn
         r = self._reward(node)
         r = r if isplayer1 else -r
@@ -467,9 +515,9 @@ class MiniMax(Strategy):
     def save(self):
         pt.save(self.Q.state_dict(), "qnet.pt")
         pt.save(self.model.state_dict(), "net.pt")
-        pickle.dump(self.states, open("states.pkl", "wb"))
+        self.buffer.save()
 
-    def load(self):
+    def load(self, load_buffer=True):
         try:
             self.Q.load_state_dict(pt.load("qnet.pt"))
             self.model.load_state_dict(pt.load("net.pt"))
@@ -478,16 +526,15 @@ class MiniMax(Strategy):
             print("models successfully loaded")
         except:
             pass
-        try:
-            self.states = pickle.load(open("states.pkl", "rb"))
-            print(f"{len(self.states)} experiences loaded")
-        except:
-            pass
+        if load_buffer:
+            self.buffer.load()
+        
     def __str__(self) -> str:
         return "MiniMax()"
 
 if __name__ == "__main__":
-    strat = MiniMax(train=True, load_nn=False)
+    strat = MiniMax(train=True, load_nn=True)
+    # strat.load()
     for _ in range(1000000):
         strat.train(1000, 100, sgd_loadbar=False)
         strat.save()
